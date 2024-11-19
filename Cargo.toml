@@ -1,0 +1,11 @@
+[package]
+name = "watcher"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = {version = "0.4.38", features = ["serde"]} 
+notify = "7.0.0"
+serde = {version = "1.0.215" ,features =["derive"]}
+tokio = {version = "1.41.1", features = ['full']}
+toml = "0.8.19"
