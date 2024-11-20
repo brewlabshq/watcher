@@ -1,5 +1,6 @@
 mod log_watcher;
 mod watcher_config;
+mod adapters;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
