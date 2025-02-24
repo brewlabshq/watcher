@@ -1,0 +1,18 @@
+log_path = "LOG_FILE_PATH"
+
+[log_service]
+service = "betterstack"
+api_key = "API_KEY"
+ingestion_url = "INGESTION_URL"
+dataset = "logs"
+
+# [log_service]
+# service = "datadog"
+# api_key = "API_KEY"
+# dataset = "solana-logs"
+# ingestion_url = "INGESTION_URL"
+
+# [log_service]
+# service = "axiom"
+# api_key = "API_KEY"
+# dataset = "logs"  # Only required for Axiom
