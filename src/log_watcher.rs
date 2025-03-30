@@ -1,12 +1,15 @@
 use crate::watcher_config::WatcherConfig;
 use notify::{Event, RecursiveMode, Watcher};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::sync::mpsc::channel;
 
-#[derive(Debug, Serialize)]
-struct LogEntry {
+const BATCH_SIZE: usize = 500;
+const MAX_BATCH_BYTES: usize = 1_048_576;
+
+#[derive(Debug, Serialize, Clone)]
+pub struct LogEntry {
     content: String,
     timestamp: chrono::DateTime<chrono::Utc>,
 }
@@ -20,10 +23,9 @@ impl LogWatcher {
     fn init(config: WatcherConfig) -> io::Result<Self> {
         let file = File::open(&config.log_path).expect("Unable to open log file");
 
-        let mut reader = BufReader::new(file);
+        let mut reader = BufReader::with_capacity(MAX_BATCH_BYTES, file);
 
         reader.seek(SeekFrom::End(0))?;
-
         Ok(LogWatcher {
             config,
             file: reader,
@@ -35,6 +37,7 @@ impl LogWatcher {
         let config: WatcherConfig = toml::from_str(&config_str)?;
         Ok(LogWatcher::init(config)?)
     }
+
     fn should_process_line(&self, line: &str) -> bool {
         if let Some(patterns) = &self.config.filter {
             patterns.iter().any(|pattern| line.contains(pattern))
@@ -42,10 +45,15 @@ impl LogWatcher {
             true
         }
     }
-    async fn process_new_lines(&mut self) -> io::Result<()> {
-        let mut line = String::new();
 
-        // Non-blocking read of new lines
+    async fn process_new_lines(
+        &mut self,
+        client: &dyn crate::adapters::log_adapter::LogAdapter,
+    ) -> io::Result<()> {
+        let mut line = String::new();
+        let mut batch = Vec::new();
+        let mut batch_size_bytes = 0;
+
         while self.file.read_line(&mut line)? > 0 {
             if !line.trim().is_empty() && self.should_process_line(&line) {
                 let entry = LogEntry {
@@ -53,22 +61,36 @@ impl LogWatcher {
                     timestamp: chrono::Utc::now(),
                 };
 
-                if let Err(e) = self.send_to_service(&entry).await {
-                    eprintln!("Failed to send log entry: {:?}", e);
+                let entry_size = line.as_bytes().len();
+
+                if batch_size_bytes + entry_size > MAX_BATCH_BYTES || batch.len() >= BATCH_SIZE {
+                    if let Err(e) = client.ingest(std::mem::take(&mut batch)).await {
+                        println!("Error sending batch logs");
+                        println!("{:?}", e);
+                    }
+                    println!("Sent {:?} logs", batch.len());
+                    batch.clear();
+                    batch_size_bytes = 0;
                 }
+
+                batch.push(entry);
+                batch_size_bytes += entry_size;
             }
             line.clear();
         }
 
+        if !batch.is_empty() {
+            if let Err(_) = client.ingest(batch).await {
+                println!("Error sending final batch logs");
+            }
+        }
         Ok(())
     }
 
-    async fn send_to_service(&self, entry: &LogEntry) -> Result<(), ()> {
-        println!("entry {:?}", entry);
-        Ok(())
-    }
-
-    pub async fn watch(&mut self) -> notify::Result<()> {
+    pub async fn watch(
+        &mut self,
+        clinet: Box<dyn crate::adapters::log_adapter::LogAdapter>,
+    ) -> notify::Result<()> {
         let (tx, rx) = channel();
 
         let mut watcher = notify::recommended_watcher(move |res| {
@@ -77,6 +99,7 @@ impl LogWatcher {
                     .unwrap_or_else(|e| eprintln!("Failed to send event: {}", e));
             }
         })?;
+
         println!(
             "Started watching {} for new content...",
             self.config.log_path
@@ -107,7 +130,7 @@ impl LogWatcher {
                     }
                     previous_size = current_size;
 
-                    if let Err(e) = self.process_new_lines().await {
+                    if let Err(e) = self.process_new_lines(&*clinet).await {
                         eprintln!("Error processing new lines: {}", e);
 
                         // Handle file deletion/rotation by reopening the file

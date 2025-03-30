@@ -1,22 +1,27 @@
+use super::super::log_watcher::LogEntry;
+use crate::adapters::log_adapter::LogAdapter;
 use axiom_rs::client::Client;
-use serde_json::Value;
+use std::error::Error;
 
-use super::Adapter;
-
-pub fn init(token: String) -> Result<Client, Box<dyn std::error::Error>> {
-    Ok(Client::builder()
-        .with_token(token)
-        .build()?)
-}
-
-pub async fn ingest(
+pub struct AxiomAdapter {
     client: Client,
     dataset: String,
-    data: Value
-) -> Result<(), Box<dyn std::error::Error>> {
-    client
-        .ingest(dataset, vec![data])
-        .await?;
-    Ok(())
 }
 
+impl AxiomAdapter {
+    pub fn new(api_key: &str, dataset: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let client = Client::builder().with_token(api_key).build()?;
+        Ok(AxiomAdapter {
+            client,
+            dataset: dataset.to_string(),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl LogAdapter for AxiomAdapter {
+    async fn ingest(&self, log_entry: Vec<LogEntry>) -> Result<(), Box<dyn Error>> {
+        self.client.ingest(self.dataset.clone(), log_entry).await?;
+        Ok(())
+    }
+}
