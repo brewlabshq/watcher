@@ -1,3 +1,4 @@
 #!/bin/bash
 
-exec cargo run /home/sol/watcher/target/release/arise-status
+cd /home/sol/watcher
+exec cargo run /home/sol/watcher/target/release/watcher
